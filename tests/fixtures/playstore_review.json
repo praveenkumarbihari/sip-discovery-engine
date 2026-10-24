@@ -1,0 +1,12 @@
+{
+  "reviewId": "gp:AOqpTOExample1",
+  "userName": "Test User",
+  "userImage": "https://example.com/img.png",
+  "content": "My SIP autopay failed twice and support is useless. Call me on 9876543210",
+  "score": 1,
+  "thumbsUpCount": 4,
+  "reviewCreatedVersion": "10.2.1",
+  "at": "2025-08-14T10:20:30",
+  "replyContent": "Sorry to hear this. Please write to us.",
+  "repliedAt": "2025-08-15T09:00:00"
+}

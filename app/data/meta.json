@@ -1,0 +1,34 @@
+{
+  "snapshot_date": "2026-10-24",
+  "research_question": "Why do first-time SIP investors on Groww continue, pause, reduce or stop their SIPs in the first 12 months, and which of those reasons is the biggest, most under-served opportunity?",
+  "has_extraction": false,
+  "counts": {
+    "stored": 14746,
+    "keyword_relevant": 1041,
+    "extracted": 0,
+    "ai_relevant": 0
+  },
+  "date_window": {
+    "since": "2025-04-01",
+    "until": null
+  },
+  "prompt_version": "v1",
+  "extraction_versions": [],
+  "models": {
+    "extraction": "anthropic/claude-haiku-5.5",
+    "escalation": "anthropic/claude-sonnet-5.5"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0
+  },
+  "limitations": [
+    "App Store RSS exposes only the most recent ~500 reviews per app.",
+    "YouTube collection is limited by the daily API quota.",
+    "Public posts over-represent people with complaints.",
+    "Groww's internal lapse data is not available, so no actual lapse rates are reported.",
+    "Very short texts are dropped before analysis."
+  ],
+  "scoring_formula": "opportunity = frequency x severity x metric_proximity x gap  (gap = 6 - current_handling)",
+  "current_handling_set": false
+}

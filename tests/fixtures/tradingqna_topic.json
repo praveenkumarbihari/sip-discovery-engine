@@ -1,0 +1,17 @@
+{
+  "id": 4242,
+  "slug": "sip-mandate-failed",
+  "title": "SIP mandate failed after changing bank",
+  "post_stream": {
+    "posts": [
+      {
+        "id": 9001,
+        "username": "someone",
+        "post_number": 1,
+        "created_at": "2025-07-10T05:00:00.000Z",
+        "cooked": "<p>My <b>SIP mandate</b> got cancelled when I changed my bank account.</p>",
+        "like_count": 2
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "feed": {
+    "entry": [
+      {
+        "im:name": {"label": "Groww"},
+        "id": {"label": "https://apps.apple.com/in/app/groww/id123"}
+      },
+      {
+        "id": {"label": "11111111"},
+        "author": {"name": {"label": "SomeUser"}},
+        "im:rating": {"label": "2"},
+        "im:version": {"label": "9.1"},
+        "title": {"label": "SIP paused by itself"},
+        "content": {"label": "My monthly SIP got stopped after mandate expired, no notification."},
+        "updated": {"label": "2025-09-01T08:30:00-07:00"},
+        "link": {"attributes": {"href": "https://itunes.apple.com/in/review?id=123&type=Purple%20Software"}}
+      }
+    ]
+  }
+}

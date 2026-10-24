@@ -1,0 +1,99 @@
+date_window:
+  since: "2025-04-01"
+  until: null
+
+http:
+  delay_seconds: 1.0
+  user_agent: "sipscout/0.1 (academic product research)"
+
+apps:
+  groww:
+    name: "Groww"
+    play_package: "com.nextbillion.groww"
+    appstore_id: null          # resolve automatically
+  indmoney:     { name: "INDmoney", play_package: null, appstore_id: null }   # only with --include-competitors
+  zerodha_coin: { name: "Zerodha Coin", play_package: null, appstore_id: null }
+
+playstore:
+  langs: ["en", "hi"]
+  country: "in"
+  max_reviews_per_app_lang: 30000
+
+appstore:
+  country: "in"
+  pages: 10
+
+reddit:
+  subreddits: ["IndiaInvestments", "mutualfunds", "personalfinanceindia", "IndianStreetBets", "FIREIndia", "StockMarketIndia"]
+  queries: ["SIP", "stop SIP", "pause SIP", "SIP mandate", "autopay SIP", "Groww SIP", "first SIP", "SIP not working", "SIP returns negative", "should I continue SIP"]
+  time_filter: "all"
+  limit_per_query: 250
+  fetch_comments: true
+  max_comments_per_post: 300
+
+youtube:
+  queries: ["SIP for beginners", "Groww SIP tutorial", "how to start SIP", "stop SIP or continue", "SIP loss", "SIP kaise band kare", "SIP pause Groww", "mutual fund SIP mistakes"]
+  region_code: "IN"
+  relevance_languages: ["en", "hi"]
+  max_videos_per_query: 8
+  max_comments_per_video: 400
+  daily_quota_budget: 9000
+
+tradingqna:
+  base_url: "https://tradingqna.com"
+  queries: ["SIP", "SIP mandate", "SIP stopped", "SIP pause", "SIP failed"]
+  max_topics_per_query: 50
+
+privacy:
+  author_salt_env: "AUTHOR_SALT"
+
+filters:
+  min_text_chars: 20
+  keyword_groups:
+    sip_core: ["sip", "systematic investment", "monthly investment", "installment", "instalment", "mutual fund", "mutual funds", "mf", "recurring investment", "auto invest", "autoinvest", "monthly invest"]
+    payment: ["autopay", "auto pay", "auto-debit", "auto debit", "mandate", "e-mandate", "nach", "upi autopay", "debit failed", "payment failed", "bounced", "insufficient balance", "bank account change", "mandate cancelled"]
+    action: ["pause", "paused", "stop", "stopped", "cancel", "cancelled", "skip", "skipped", "reduce", "decrease", "step up", "step-up", "restart", "resume", "redeem", "redemption", "withdraw", "discontinue", "discontinued", "unsubscribe", "modify", "change date", "stopping", "failed", "failure", "deducted", "debited", "start", "started", "starting", "continue", "continued", "continuing", "keep investing", "stay invested", "first sip"]
+    experience: ["returns", "negative", "loss", "red", "xirr", "portfolio down", "not growing", "confused", "don't understand", "waste"]
+    # Payment terms count as SIP context on their own unless one of these appears (IPO/trading mandates).
+    non_sip: ["ipo", "intraday", "f&o", "futures", "options trading", "share purchase"]
+    hinglish: ["band kar", "band karna", "ruk gaya", "ruk gayi", "paise kat", "paisa kat", "kat gaya", "kat gaye", "nikal liya", "nikalna", "nuksaan", "ghata"]
+
+llm:
+  base_url: "https://openrouter.ai/api/v1"
+  api_key_env: "OPENROUTER_API_KEY"
+  # Model slugs are OpenRouter ids (openrouter.ai/models). Verify these exist before Stage 2.
+  cluster_model: "anthropic/claude-sonnet-5.5"   # names emergent clusters
+  answer_model: "anthropic/claude-haiku-5.5"     # app "Ask the data"
+
+extraction:
+  model: "anthropic/claude-haiku-5.5"           # bulk extraction
+  escalation_model: "anthropic/claude-sonnet-5.5"  # re-run for low-confidence items
+  escalate_below_confidence: 0.6
+  prompt_file: "prompts/extract_v1.md"
+  prompt_version: "v1"
+  batch_size: 20                       # records per API call
+  max_concurrency: 4
+  use_batch_api: false                 # not available via OpenRouter; keep false
+  price_per_mtok_input: null           # fill from the model's OpenRouter page to get cost estimates
+  price_per_mtok_output: null
+
+taxonomy:
+  themes:
+    - { id: involuntary_payment, label: "Payment failed or mandate broke" }
+    - { id: payday_mismatch, label: "SIP date doesn't match cash flow" }
+    - { id: bank_or_job_change, label: "Bank account or job change" }
+    - { id: pause_never_resumed, label: "Paused and never came back" }
+    - { id: expectation_mismatch, label: "Returns didn't match expectations" }
+    - { id: cant_read_performance, label: "Can't understand returns or statement" }
+    - { id: market_fall_anxiety, label: "Anxiety during market fall" }
+    - { id: cash_need_or_life_event, label: "Needed money or life event" }
+    - { id: overcommitment, label: "Too many or too large SIPs" }
+    - { id: app_ux_friction, label: "App bug or confusing flow" }
+    - { id: trust_or_support, label: "Trust or customer support issue" }
+    - { id: positive_continuation, label: "Reason they kept going" }
+    - { id: other, label: "Other (describe)" }
+
+scoring:
+  # Manual 1-5 judgement per theme: how well Groww handles this today (5 = well handled, 1 = not at all).
+  # Fill these in after reviewing the app yourself; the gap used in scoring is (6 - value).
+  current_handling: {}
