@@ -144,7 +144,7 @@ class BatchResult:
 
 
 def call_batch(client: Any, model: str, system: str, schema: dict, rows: list[sqlite3.Row],
-               theme_ids: set[str]) -> BatchResult:
+               theme_ids: set[str], max_tokens: int = 8000) -> BatchResult:
     """One API call for a batch of records; validates every returned item."""
     res = BatchResult()
     payload = [{"id": f"r{i}", "text": record_text(r)} for i, r in enumerate(rows)]
@@ -153,7 +153,7 @@ def call_batch(client: Any, model: str, system: str, schema: dict, rows: list[sq
 
     def _go() -> Any:
         return client.chat.completions.create(
-            model=model, temperature=0,
+            model=model, temperature=0, max_tokens=max_tokens,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             tools=[schema], tool_choice={"type": "function", "function": {"name": "record_extractions"}},
         )
@@ -276,15 +276,16 @@ def run_extract(cfg: dict[str, Any], conn: sqlite3.Connection, prompt_version: s
         return {"records": 0, "extracted": 0, "errors": 0, "escalated": 0}
     client = get_client(cfg)
     bs = int(ecfg["batch_size"])
+    mt = int(ecfg.get("max_output_tokens", 8000))
     batches = [rows[i:i + bs] for i in range(0, len(rows), bs)]
     by_id = {r["id"]: r for r in rows}
     stats = {"records": len(rows), "extracted": 0, "errors": 0, "escalated": 0}
 
     def work(batch: list[sqlite3.Row]) -> tuple[list[sqlite3.Row], BatchResult, dict[str, BatchResult]]:
-        first = call_batch(client, ecfg["model"], system, schema, batch, tset)
+        first = call_batch(client, ecfg["model"], system, schema, batch, tset, mt)
         retries: dict[str, BatchResult] = {}
         for rid in list(first.errors):          # retry each failed record alone, once
-            r2 = call_batch(client, ecfg["model"], system, schema, [by_id[rid]], tset)
+            r2 = call_batch(client, ecfg["model"], system, schema, [by_id[rid]], tset, mt)
             retries[rid] = r2
         return batch, first, retries
 
@@ -318,7 +319,7 @@ def run_extract(cfg: dict[str, Any], conn: sqlite3.Connection, prompt_version: s
            and json.loads(cur["extraction"])["confidence"] < float(ecfg["escalate_below_confidence"])]
     for i in range(0, len(low), bs):
         chunk = [by_id[r] for r in low[i:i + bs]]
-        res = call_batch(client, ecfg["escalation_model"], system, schema, chunk, tset)
+        res = call_batch(client, ecfg["escalation_model"], system, schema, chunk, tset, mt)
         _log_call(conn, ecfg["escalation_model"], prompt_version, len(chunk), res)
         for rid, ex in res.ok.items():
             old = json.loads(conn.execute("SELECT extraction FROM records WHERE id=?", (rid,)).fetchone()[0])

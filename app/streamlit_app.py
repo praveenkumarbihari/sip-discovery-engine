@@ -39,7 +39,7 @@ SOURCE_NAMES = {"playstore": "Play Store", "appstore": "App Store", "tradingqna"
                 "youtube_comment": "YouTube", "reddit": "Reddit", "reddit_post": "Reddit", "reddit_comment": "Reddit"}
 log = logging.getLogger("ask")
 
-st.set_page_config(page_title="SIP Continuation Discovery Engine", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Discovery · SIP Discovery Engine", page_icon="📈", layout="wide")
 
 CSS = """
 <style>
@@ -698,7 +698,9 @@ def _section(name: str) -> str:
 
 def _chat(client, model: str, system: str, user: str, max_tokens: int) -> str:
     r = client.chat.completions.create(model=model, temperature=0, max_tokens=max_tokens,
-                                       messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
+                                       messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                                       # Hidden reasoning otherwise consumes the small budget and leaves no visible reply.
+                                       extra_body={"reasoning": {"enabled": False}})
     return (r.choices[0].message.content or "").strip()
 
 
@@ -783,9 +785,12 @@ def page_ask(d: dict) -> None:
                      for i, r in enumerate(quotes.itertuples(), 1)]
         with st.spinner("Writing the answer..."):
             answer = _chat(client, model, _section("ANSWER"),
-                           json.dumps({"question": question, "counts": facts, "quotes": qlist}, ensure_ascii=False), 400)
+                           json.dumps({"question": question, "counts": facts, "quotes": qlist}, ensure_ascii=False), 700)
     except Exception as exc:  # noqa: BLE001
         st.error(f"The model call failed ({type(exc).__name__}). Check the OpenRouter key and credit.")
+        return
+    if not answer:
+        st.error("The model returned an empty answer. Try again or rephrase the question.")
         return
     problems = guardrail.violations(answer)
     if problems:
@@ -860,7 +865,8 @@ if data is None:
     st.stop()
 
 with st.sidebar:
-    st.markdown("### 📈 SIP Discovery Engine")
+    st.markdown("## 🤖 AI Discovery")
+    st.markdown("**SIP Discovery Engine**")
     st.caption("Why first-time investors continue, pause, reduce or stop SIPs.")
 
 def _page(fn, title: str, icon: str, path: str, default: bool = False) -> st.Page:

@@ -73,6 +73,7 @@ extraction:
   prompt_version: "v1"
   batch_size: 20                       # records per API call
   max_concurrency: 4
+  max_output_tokens: 8000              # unset = model max (64k), which OpenRouter pre-reserves against credit
   use_batch_api: false                 # not available via OpenRouter; keep false
   price_per_mtok_input: null           # fill from the model's OpenRouter page to get cost estimates
   price_per_mtok_output: null
