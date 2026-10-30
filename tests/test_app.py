@@ -25,6 +25,9 @@ import guardrail  # noqa: E402
     "It is a good idea to stop your SIP.",
     "Reliance shares are a safe pick.",
     "Don't miss out, invest in this scheme immediately.",
+    "Pause your SIP until the market recovers.",
+    "Users were confused. Stop the SIP and redeem the units.",
+    "- Continue your SIPs through the dip.",
 ])
 def test_guardrail_rejects_advice(text):
     assert not guardrail.is_allowed(text), text
@@ -33,6 +36,9 @@ def test_guardrail_rejects_advice(text):
 @pytest.mark.parametrize("text", [
     "12 of 40 records say the autopay mandate failed [1]. Users said support was slow [2].",
     "Most users who paused mentioned a market fall; some said they could not read the statement [1].",
+    "Users said they had to pause the SIP after a job loss [1]. Others chose to stop SIPs when cash was tight [2].",
+    "Of 285 records, 19 said the app failed to stop the SIP they cancelled [3].",
+    "Some wanted to continue investing but the mandate broke [4].",
 ])
 def test_guardrail_allows_descriptions(text):
     assert guardrail.is_allowed(text), guardrail.violations(text)

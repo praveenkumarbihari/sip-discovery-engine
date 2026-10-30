@@ -1,16 +1,20 @@
 """SIP Continuation Discovery Engine: public, read-only explorer.
 
 Reads only the published snapshot in app/data/. It never scrapes, never opens the
-pipeline database and never sees Reddit, YouTube or Google credentials.
+pipeline database and never sees Reddit, YouTube or Google credentials. In a local
+checkout the sidebar can launch the sipscout CLI as a separate process to refresh it.
 """
 
 from __future__ import annotations
 
 import html
+import importlib.util
 import json
 import logging
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -24,6 +28,8 @@ import insights
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 PROMPTS = HERE.parent / "prompts"
+PIPELINE_DB = HERE.parent / "data" / "sipscout.db"
+COLLECT_SOURCES = ["playstore", "appstore", "reddit", "youtube", "tradingqna"]
 FOOTER = "Research prototype using public posts and reviews. Not investment advice. Not affiliated with Groww."
 MONTH_ORDER = ["M0-1", "M1-3", "M3-6", "M6-12", "M12+", "unknown"]
 EXAMPLES = [
@@ -36,7 +42,7 @@ MAX_QUESTIONS = 10
 PRIMARY = "#4F46E5"
 TIER_COLORS = {"Prioritise": "#E5484D", "Investigate": "#F5A524", "Monitor": "#8B8D98"}
 SOURCE_NAMES = {"playstore": "Play Store", "appstore": "App Store", "tradingqna": "TradingQ&A",
-                "youtube_comment": "YouTube", "reddit": "Reddit", "reddit_post": "Reddit", "reddit_comment": "Reddit"}
+                "youtube": "YouTube", "youtube_comment": "YouTube", "reddit": "Reddit", "reddit_post": "Reddit", "reddit_comment": "Reddit"}
 log = logging.getLogger("ask")
 
 st.set_page_config(page_title="AI Discovery · SIP Discovery Engine", page_icon="📈", layout="wide")
@@ -582,6 +588,8 @@ def page_explorer(d: dict) -> None:
     labels = labels_of(d)
     hero("Evidence explorer", "Read the posts and reviews behind every number, including the ones the filter left out.",
          eyebrow="Evidence")
+    if pipeline_available():
+        data_panel(d)
     tg = tagged().set_index("id")
     n_rel = len(rec)
     scope = st.segmented_control("Scope", [f"Analysed ({n_rel:,})", f"All collected ({len(corpus):,})"],
@@ -857,6 +865,103 @@ def page_method(d: dict) -> None:
             st.markdown(f"- {item}")
 
 
+# ---------------------------------------------------------------- refresh
+def pipeline_available() -> bool:
+    """Only a local checkout has the pipeline database; hosted copies stay read-only."""
+    return PIPELINE_DB.exists() and importlib.util.find_spec("sipscout") is not None
+
+
+def _run_step(label: str, args: list[str], log_box) -> tuple[bool, str]:
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "COLUMNS": "120", "NO_COLOR": "1"}
+    proc = subprocess.Popen([sys.executable, "-m", "sipscout.cli", *args], cwd=HERE.parent, env=env,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, encoding="utf-8", errors="replace")
+    lines: list[str] = []
+    for line in proc.stdout:
+        if line.strip():
+            lines.append(line.rstrip())
+            log_box.code("\n".join(lines[-12:]), language=None)
+    ok = proc.wait() == 0
+    st.write(("✅ " if ok else "❌ ") + label)
+    return ok, " ".join(" ".join(lines[-4:]).split())
+
+
+def _run_pipeline(steps: list[tuple[str, list[str]]], title: str) -> None:
+    with st.status(title, expanded=True) as status:
+        log_box = st.empty()
+        failed: dict[str, str] = {}
+        for label, args in steps:
+            ok, tail = _run_step(label, args, log_box)
+            if not ok:
+                failed[label] = tail
+        if "Publish snapshot" in failed:
+            status.update(label="Failed: the snapshot was not republished", state="error")
+            st.error(failed["Publish snapshot"])
+            return
+        status.update(label="Done", state="complete")
+    st.session_state.snapshot_msg = (
+        "Snapshot updated. Every page now shows the new data." if not failed else
+        "Snapshot updated, but these steps had errors:\n\n" + "\n\n".join(f"**{k}:** {v}" for k, v in failed.items()))
+    st.cache_data.clear()
+    st.rerun()
+
+
+def data_panel(d: dict) -> None:
+    """Fetch-more and analyse-more controls, shown on the Evidence explorer in a local checkout."""
+    meta, c = d["meta"], d["meta"]["counts"]
+    pending = max(c["keyword_relevant"] - c.get("extracted", 0), 0)
+    msg = st.session_state.pop("snapshot_msg", None)
+    if msg:
+        (st.warning if "errors" in msg else st.success)(msg)
+    title = "🚀 Fetch more data & analyse" + (f" · {pending:,} records awaiting analysis" if pending else "")
+    with st.expander(title):
+        st.caption(f"Snapshot {meta['snapshot_date']} · since {meta['date_window']['since']} · "
+                   f"{c['stored']:,} stored · {c['keyword_relevant']:,} keyword-relevant · "
+                   f"{c.get('extracted', 0):,} AI-analysed · {pending:,} awaiting analysis")
+        analyse_tab, fetch_tab = st.tabs(["🧠 Analyse more", "📥 Fetch more data"])
+        with analyse_tab:
+            st.caption(f"Run the LLM on keyword-relevant records not yet analysed (needed for the Themes page). "
+                       f"{_llm_cost_note(pending)}")
+            if st.button(f"Analyse {pending:,} pending records", type="primary", disabled=pending == 0):
+                _run_pipeline([("LLM extraction", ["extract"]), ("Publish snapshot", ["publish"])],
+                              "Analysing records...")
+        with fetch_tab:
+            _fetch_form(meta)
+
+
+def _llm_cost_note(n: int | None = None) -> str:
+    from sipscout.config import load_config
+    model = load_config()["extraction"]["model"]
+    if model.endswith(":free"):
+        return (f"Model `{model}` is free: about 50 calls (20 records each) per day; a run stops at the daily "
+                "cap and resumes next time. Never-analysed records go first.")
+    cost = f"about ${n * 0.00015:.2f} for {n:,} records" if n is not None else "about $0.15 per 1,000 records"
+    return f"Model `{model}` uses OpenRouter credit: {cost}."
+
+
+def _fetch_form(meta: dict) -> None:
+    st.caption("Collect new and older posts and reviews. Records already stored are updated, not duplicated. "
+               "Collection can take several minutes per source.")
+    a, b = st.columns(2)
+    sources = a.multiselect("Sources", COLLECT_SOURCES, default=["playstore", "appstore", "youtube"],
+                            format_func=lambda s: SOURCE_NAMES.get(s, s.title()))
+    default_since = pd.Timestamp(meta["date_window"]["since"]).date()
+    since = b.date_input("Collect posts since", value=default_since, max_value=pd.Timestamp.today().date(),
+                         help="Pick an earlier date to go further back than the current snapshot.")
+    a, b = st.columns(2)
+    competitors = a.checkbox("Include competitor apps", help="Also collect reviews of the competitor apps "
+                             "listed in config.yaml, for comparison.")
+    analyse = b.checkbox("Analyse new records with the LLM", value=True, help=_llm_cost_note())
+    if st.button("Fetch & analyse", type="primary", disabled=not sources):
+        extra = ["--since", since.isoformat()] + (["--include-competitors"] if competitors else [])
+        steps = [(f"Collect {SOURCE_NAMES.get(s, s)}", ["collect", "--source", s, "--yes", *extra]) for s in sources]
+        steps.append(("Keyword filter", ["filter"]))
+        if analyse:
+            steps.append(("LLM extraction", ["extract"]))
+        steps.append(("Publish snapshot", ["publish"]))
+        _run_pipeline(steps, "Fetching and analysing...")
+
+
 # ---------------------------------------------------------------- main
 data = load()
 if data is None:
@@ -881,8 +986,7 @@ nav = st.navigation({
     "Insights": [_page(page_summary, "Opportunity summary", "🎯", "summary"),
                  _page(page_signals, "Signals & trends", "📡", "signals"),
                  _page(page_overview, "Overview", "📊", "overview")],
-    "Explore": [_page(page_themes, "Themes", "🧭", "themes"),
-                _page(page_ask, "Ask the data", "💬", "ask")],
+    "Explore": [_page(page_themes, "Themes", "🧭", "themes")],
     "About": [_page(page_method, "Methodology", "📐", "methodology")],
 })
 with st.sidebar:

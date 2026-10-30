@@ -78,3 +78,48 @@ def test_call_batch_missing_item_reported():
     rows = _rows(["my mandate expired", "mandate expired again"])
     res = ex.call_batch(FakeClient([good(id="r0")]), "m", "sys", {}, rows, THEMES)
     assert res.errors["id1"] == "missing from response"
+
+
+def test_out_of_credit_stops_without_retrying():
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        err = Exception("Error code: 402 - You requested up to 8000 tokens, but can only afford 5252.")
+        err.status_code = 402
+        raise err
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    try:
+        ex.call_batch(client, "m", "sys", {}, _rows(["mandate expired"]), THEMES)
+    except ex.LLMCreditError as exc:
+        assert "5252" in str(exc)
+    else:
+        raise AssertionError("expected LLMCreditError")
+    assert len(calls) == 1 and calls[0]["max_tokens"] == 8000
+
+
+def test_response_without_choices_is_a_batch_error_not_a_crash():
+    resp = SimpleNamespace(choices=None, usage=None, error={"code": 502, "message": "Upstream error"})
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw: resp)))
+    res = ex.call_batch(client, "m:free", "sys", {}, _rows(["mandate expired"]), THEMES)
+    assert not res.ok and "Upstream error" in res.errors["id0"]
+
+
+def test_free_model_daily_cap_stops_without_retrying():
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        err = Exception("Error code: 429 - Rate limit exceeded: free-models-per-day.")
+        err.status_code = 429
+        raise err
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    try:
+        ex.call_batch(client, "m:free", "sys", {}, _rows(["mandate expired"]), THEMES, reasoning=False)
+    except ex.LLMQuotaError as exc:
+        assert "tomorrow" in str(exc)
+    else:
+        raise AssertionError("expected LLMQuotaError")
+    assert len(calls) == 1 and calls[0]["extra_body"] == {"reasoning": {"enabled": False}}

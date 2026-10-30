@@ -220,6 +220,9 @@ def extract(
     except ex.LLMAuthError as exc:
         console.print(f"[red]LLM call rejected: {exc}\nCheck OPENROUTER_API_KEY and the model slugs in config.yaml.[/red]")
         raise typer.Exit(1)
+    except ex.LLMCreditError as exc:
+        console.print(f"[red]{exc}\nRecords already extracted are kept; only pending ones are retried.[/red]")
+        raise typer.Exit(1)
 
 
 @app.command()

@@ -1,12 +1,12 @@
 {
-  "snapshot_date": "2026-10-24",
+  "snapshot_date": "2026-10-28",
   "research_question": "Why do first-time SIP investors on Groww continue, pause, reduce or stop their SIPs in the first 12 months, and which of those reasons is the biggest, most under-served opportunity?",
   "has_extraction": true,
   "counts": {
-    "stored": 14746,
-    "keyword_relevant": 1041,
-    "extracted": 620,
-    "ai_relevant": 285
+    "stored": 17598,
+    "keyword_relevant": 1382,
+    "extracted": 1256,
+    "ai_relevant": 468
   },
   "date_window": {
     "since": "2025-04-01",
@@ -14,15 +14,16 @@
   },
   "prompt_version": "v1",
   "extraction_versions": [
-    "v1|anthropic/claude-haiku-5.5"
+    "v1|anthropic/claude-haiku-5.5",
+    "v1|nvidia/nemotron-3.5-super-vl:free"
   ],
   "models": {
-    "extraction": "anthropic/claude-haiku-5.5",
-    "escalation": "anthropic/claude-sonnet-5.5"
+    "extraction": "nvidia/nemotron-3.5-super-vl:free",
+    "escalation": null
   },
   "tokens": {
-    "input": 709437,
-    "output": 226407
+    "input": 892675,
+    "output": 363960
   },
   "limitations": [
     "App Store RSS exposes only the most recent ~500 reviews per app.",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -127,9 +128,26 @@ class LLMAuthError(RuntimeError):
     """Key rejected, no access, or unknown model: retrying cannot help, so abort the run."""
 
 
+class LLMCreditError(RuntimeError):
+    """OpenRouter balance too low (HTTP 402): every further call would fail too, so stop the run."""
+
+
+class LLMQuotaError(LLMCreditError):
+    """Daily free-model request cap reached (HTTP 429 per-day): stop now and resume tomorrow."""
+
+
+def _is_credit_error(exc: BaseException) -> bool:
+    return getattr(exc, "status_code", None) == 402
+
+
+def _is_daily_cap(exc: BaseException) -> bool:
+    return getattr(exc, "status_code", None) == 429 and bool(re.search(r"per[- ]day", str(exc), re.I))
+
+
 def _retry_transient(fn: Any) -> Any:
-    """5 attempts with backoff for transient errors only (never auth/model errors)."""
-    return retry(retry=retry_if_exception(lambda e: not isinstance(e, _FATAL)),
+    """5 attempts with backoff for transient errors only (never auth, model, credit or daily-cap errors)."""
+    return retry(retry=retry_if_exception(lambda e: not isinstance(e, _FATAL) and not _is_credit_error(e)
+                                          and not _is_daily_cap(e)),
                  stop=stop_after_attempt(5), wait=wait_exponential_jitter(initial=1, max=30), reraise=True)(fn)
 
 
@@ -144,7 +162,7 @@ class BatchResult:
 
 
 def call_batch(client: Any, model: str, system: str, schema: dict, rows: list[sqlite3.Row],
-               theme_ids: set[str], max_tokens: int = 8000) -> BatchResult:
+               theme_ids: set[str], max_tokens: int = 8000, reasoning: bool = True) -> BatchResult:
     """One API call for a batch of records; validates every returned item."""
     res = BatchResult()
     payload = [{"id": f"r{i}", "text": record_text(r)} for i, r in enumerate(rows)]
@@ -156,6 +174,7 @@ def call_batch(client: Any, model: str, system: str, schema: dict, rows: list[sq
             model=model, temperature=0, max_tokens=max_tokens,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             tools=[schema], tool_choice={"type": "function", "function": {"name": "record_extractions"}},
+            **({} if reasoning else {"extra_body": {"reasoning": {"enabled": False}}}),
         )
 
     try:
@@ -163,8 +182,26 @@ def call_batch(client: Any, model: str, system: str, schema: dict, rows: list[sq
     except _FATAL as exc:
         raise LLMAuthError(f"{type(exc).__name__}: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
+        if _is_credit_error(exc):
+            afford = re.search(r"can only afford (\d+)", str(exc))
+            detail = f" (the balance covers about {afford.group(1)} tokens, a call reserves up to {max_tokens})" if afford else ""
+            raise LLMCreditError(f"OpenRouter credit exhausted{detail}. Add credit at "
+                                 "https://openrouter.ai/settings/credits or switch extraction.model in config.yaml "
+                                 "to a ':free' model, then run extract again.") from exc
+        if _is_daily_cap(exc):
+            raise LLMQuotaError("Daily limit for free OpenRouter models reached. Run extract again tomorrow; "
+                                "it resumes where it stopped.") from exc
         for rid, _ in by_key.values():
             res.errors[rid] = f"api: {type(exc).__name__}: {exc}"[:300]
+        return res
+    if not getattr(resp, "choices", None):      # some free providers return HTTP 200 with only an error body
+        err = getattr(resp, "error", None) or (getattr(resp, "model_extra", None) or {}).get("error") or {}
+        text = json.dumps(err, default=str)[:300] if err else "empty response (no choices)"
+        if re.search(r"per[- ]day", text, re.I):
+            raise LLMQuotaError("Daily limit for free OpenRouter models reached. Run extract again tomorrow; "
+                                "it resumes where it stopped.")
+        for rid, _ in by_key.values():
+            res.errors[rid] = f"api: {text}"
         return res
     if resp.usage:
         res.input_tokens, res.output_tokens = resp.usage.prompt_tokens, resp.usage.completion_tokens
@@ -214,7 +251,8 @@ def pending_rows(conn: sqlite3.Connection, version_tag: str, only_ids: set[str] 
                         (version_tag,)).fetchone()[0]
     rows = conn.execute(
         "SELECT id, title, text FROM records WHERE is_relevant=1 "
-        "AND (extraction_version IS NULL OR extraction_version != ?) ORDER BY id", (version_tag,)).fetchall()
+        "AND (extraction_version IS NULL OR extraction_version != ?) "
+        "ORDER BY extraction_version IS NOT NULL, id", (version_tag,)).fetchall()  # never-extracted first
     if only_ids is not None:
         rows = [r for r in rows if r["id"] in only_ids]
     if max_records:
@@ -277,49 +315,61 @@ def run_extract(cfg: dict[str, Any], conn: sqlite3.Connection, prompt_version: s
     client = get_client(cfg)
     bs = int(ecfg["batch_size"])
     mt = int(ecfg.get("max_output_tokens", 8000))
+    think = bool(ecfg.get("reasoning", True))
     batches = [rows[i:i + bs] for i in range(0, len(rows), bs)]
     by_id = {r["id"]: r for r in rows}
     stats = {"records": len(rows), "extracted": 0, "errors": 0, "escalated": 0}
 
-    def work(batch: list[sqlite3.Row]) -> tuple[list[sqlite3.Row], BatchResult, dict[str, BatchResult]]:
-        first = call_batch(client, ecfg["model"], system, schema, batch, tset, mt)
-        retries: dict[str, BatchResult] = {}
-        for rid in list(first.errors):          # retry each failed record alone, once
-            r2 = call_batch(client, ecfg["model"], system, schema, [by_id[rid]], tset, mt)
-            retries[rid] = r2
-        return batch, first, retries
+    def work(batch: list[sqlite3.Row]) -> tuple[list[sqlite3.Row], BatchResult, BatchResult | None]:
+        first = call_batch(client, ecfg["model"], system, schema, batch, tset, mt, think)
+        retry_res = None
+        if first.errors:                        # retry the failed records together, once (one call, not one per record)
+            retry_res = call_batch(client, ecfg["model"], system, schema,
+                                   [by_id[rid] for rid in first.errors], tset, mt, think)
+        return batch, first, retry_res
 
     with ThreadPoolExecutor(max_workers=int(ecfg["max_concurrency"])) as pool:
         futures = [pool.submit(work, b) for b in batches]
         for n, fut in enumerate(as_completed(futures), 1):
-            batch, first, retries = fut.result()
+            try:
+                batch, first, retry_res = fut.result()
+            except LLMCreditError:
+                for f in futures:
+                    f.cancel()
+                conn.commit()
+                console.print(f"  stopped: {stats['extracted']} records extracted and saved this run; "
+                              f"{len(rows) - stats['extracted']} still pending.")
+                raise
             _log_call(conn, ecfg["model"], prompt_version, len(batch), first)
             final = dict(first.ok)
-            errs = {}
-            for rid, r2 in retries.items():
-                _log_call(conn, ecfg["model"], prompt_version, 1, r2)
-                if rid in r2.ok:
-                    final[rid] = r2.ok[rid]
-                else:
-                    errs[rid] = r2.errors.get(rid, first.errors[rid])
+            errs = dict(first.errors)
+            if retry_res is not None:
+                _log_call(conn, ecfg["model"], prompt_version, len(first.errors), retry_res)
+                final.update(retry_res.ok)
+                errs = {rid: retry_res.errors.get(rid, err) for rid, err in errs.items() if rid not in retry_res.ok}
             for rid, ex in final.items():
                 ex["_runs"] = [{"model": ecfg["model"], "confidence": ex["confidence"]}]
                 _save(conn, rid, ex, tag)
                 stats["extracted"] += 1
             for rid, err in errs.items():
-                _save(conn, rid, {"extraction_error": err}, None)
+                # Keep an earlier model's valid extraction rather than replacing it with an error.
+                conn.execute("UPDATE records SET extraction=?, extracted_at=? WHERE id=? AND extraction_version IS NULL",
+                             (json.dumps({"extraction_error": err}), utcnow().isoformat(), rid))
                 stats["errors"] += 1
             conn.commit()
             console.print(f"  batch {n}/{len(batches)} done ({stats['extracted']} ok, {stats['errors']} errors)")
+            for reason, count in Counter(errs.values()).most_common(3):
+                console.print(f"    {count} failed: {reason[:200]}")
 
     # Escalate low-confidence results to the stronger model; keep both results.
     low = [rid for rid in by_id
-           if (cur := conn.execute("SELECT extraction, extraction_version FROM records WHERE id=?", (rid,)).fetchone())
+           if ecfg.get("escalation_model")
+           and (cur := conn.execute("SELECT extraction, extraction_version FROM records WHERE id=?", (rid,)).fetchone())
            and cur["extraction_version"] == tag
            and json.loads(cur["extraction"])["confidence"] < float(ecfg["escalate_below_confidence"])]
     for i in range(0, len(low), bs):
         chunk = [by_id[r] for r in low[i:i + bs]]
-        res = call_batch(client, ecfg["escalation_model"], system, schema, chunk, tset, mt)
+        res = call_batch(client, ecfg["escalation_model"], system, schema, chunk, tset, mt, think)
         _log_call(conn, ecfg["escalation_model"], prompt_version, len(chunk), res)
         for rid, ex in res.ok.items():
             old = json.loads(conn.execute("SELECT extraction FROM records WHERE id=?", (rid,)).fetchone()[0])

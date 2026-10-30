@@ -27,7 +27,9 @@ _ADVICE = [
     r"\bi\s+(?:recommend|suggest|advise|would\s+advise|would\s+suggest)\b",
     r"\bwe\s+(?:recommend|suggest|advise)\b",
     rf"\b(?:consider|try|better\s+to|best\s+to|advisable\s+to|wise\s+to|worth)\s+{_ACTIONS}\b",
-    rf"\b(?:buy|sell|switch\s+to|invest\s+in|continue|stop|pause|redeem|increase|reduce|hold|exit)\s+(?:your|the|this|that|a|an|more)?\s*(?:sip|sips|fund|funds|units|investment|investments|stocks?|shares)\b",
+    # Imperative only (sentence start): "users had to pause the SIP" is a description, "Pause your SIP" is advice.
+    rf"(?:^|[.!?:;]\s+|\n)\s*(?:[-*•]\s*|\d+[.)]\s*)?(?:buy|sell|switch\s+to|invest\s+in|continue|stop|pause|redeem|increase|reduce|hold|exit)\s+(?:your|the|this|that|a|an|more)?\s*(?:sip|sips|fund|funds|units|investment|investments|stocks?|shares)\b",
+    rf"\byour\s+(?:sip|sips|investment|investments)\b.{{0,40}}\b(?:should|must)\b",
     r"\b(?:is|it\s+is|it's)\s+(?:a\s+)?(?:good|bad|great|smart|wise)\s+(?:idea|time|move|choice)\s+to\b",
     r"\bthe\s+best\s+(?:fund|sip|option|choice|stock)\b",
     r"\bguaranteed\s+returns?\b",

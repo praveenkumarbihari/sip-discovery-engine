@@ -66,8 +66,11 @@ llm:
   answer_model: "anthropic/claude-haiku-5.5"     # app "Ask the data"
 
 extraction:
-  model: "anthropic/claude-haiku-5.5"           # bulk extraction
-  escalation_model: "anthropic/claude-sonnet-5.5"  # re-run for low-confidence items
+  # Free model (no OpenRouter credit needed; ~50 calls/day, runs stop and resume at the daily cap).
+  # Paid alternative: "anthropic/claude-haiku-5.5" with escalation_model "anthropic/claude-sonnet-5.5".
+  model: "nvidia/nemotron-3.5-super-vl:free"    # bulk extraction
+  escalation_model: null                        # re-run for low-confidence items; null = no escalation
+  reasoning: false                              # hidden reasoning otherwise truncates 20-record tool calls
   escalate_below_confidence: 0.6
   prompt_file: "prompts/extract_v1.md"
   prompt_version: "v1"
